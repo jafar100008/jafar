@@ -130,6 +130,24 @@
       max-height: 500px;
       overflow-y: auto;
     }
+    
+    .auto-salary-status {
+      background-color: #f8f9fa;
+      padding: 10px;
+      border-radius: 5px;
+      margin: 10px 0;
+      text-align: center;
+    }
+    
+    .active {
+      background-color: #4CAF50;
+      color: white;
+    }
+    
+    .inactive {
+      background-color: #f44336;
+      color: white;
+    }
   </style>
 </head>
 <body>
@@ -159,7 +177,7 @@
       <h3>إضافة موظف</h3>
       <input type="text" id="employeeName" placeholder="اسم الموظف" />
       <input type="text" id="employeePhone" placeholder="رقم الهاتف" />
-      <input type="number" id="dailyAmount" placeholder="المبلغ اليومي" />
+      <input type="number" id="dailyAmount" placeholder="المبلغ اليومي (دينار)" />
       <button onclick="addEmployee()">إضافة موظف</button>
     </div>
 
@@ -172,7 +190,7 @@
       <thead>
         <tr>
           <th>الاسم</th>
-          <th>الرصيد</th>
+          <th>الرصيد (دينار)</th>
           <th>المعرف</th>
           <th>رقم الهاتف</th>
           <th>حالة</th>
@@ -186,8 +204,8 @@
       <h3>إدارة الرصيد</h3>
       <div id="selectedEmployeeInfo" class="hidden">
         <p id="selectedEmployeeName"></p>
-        <p id="selectedEmployeeBalance">الرصيد الحالي: 0</p>
-        <input type="number" id="balanceChange" placeholder="قيمة الرصيد" />
+        <p id="selectedEmployeeBalance">الرصيد الحالي: 0 دينار</p>
+        <input type="number" id="balanceChange" placeholder="قيمة الرصيد (دينار)" />
         <button onclick="updateBalance('increase')">زيادة</button>
         <button onclick="updateBalance('decrease')">خصم</button>
       </div>
@@ -195,14 +213,17 @@
 
     <div id="bulkBalanceSection" class="hidden">
       <h3>إضافة رصيد لجميع الموظفين</h3>
-      <input type="number" id="bulkAmount" placeholder="المبلغ المضاف لكل موظف" />
+      <input type="number" id="bulkAmount" placeholder="المبلغ المضاف لكل موظف (دينار)" />
       <button onclick="addBulkBalance()">تأكيد الإضافة</button>
     </div>
 
     <div id="sendSalariesSection" class="hidden">
       <h3>إرسال رواتب الموظفين</h3>
-      <p>سيتم إضافة المبلغ اليومي لكل موظف إلى رصيده</p>
-      <button onclick="calculateSalaries()">تحديث الرواتب حسب المدة</button>
+      <div id="autoSalaryStatus" class="auto-salary-status inactive">
+        الحالة: غير نشط
+      </div>
+      <button onclick="toggleAutoSalary()">تشغيل/إيقاف الرواتب التلقائية</button>
+      <p>سيتم إضافة المبلغ اليومي كاملاً للموظف إلى رصيده كل دقيقة</p>
     </div>
 
     <div id="activityLogSection" class="hidden activity-log">
@@ -220,16 +241,12 @@
 
     <div id="companyRevenuesSection" class="hidden">
       <h3>إيرادات الشركة</h3>
-      <p id="companyRevenueDisplay">الرصيد الحالي: 0</p>
-      <input type="number" id="companyRevenueAmount" placeholder="قيمة الرصيد" />
+      <p id="companyRevenueDisplay">الرصيد الحالي: 0 دينار</p>
+      <input type="number" id="companyRevenueAmount" placeholder="قيمة الرصيد (دينار)" />
       <button onclick="updateCompanyRevenue('increase')">إضافة</button>
       <button onclick="updateCompanyRevenue('decrease')">خصم</button>
     </div>
   </div>
-
-  <button onclick="window.location.href='index3.html'" style="position: fixed; bottom: 20px; left: 20px; padding: 10px 20px; font-size: 16px; background-color: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer;">
-    اضغط هنا لعرض صفحه الحسابات
-  </button>
 
   <script>
     const firebaseConfig = {
@@ -260,8 +277,21 @@
     const companyRevenueDisplay = document.getElementById("companyRevenueDisplay");
     const companyRevenueAmount = document.getElementById("companyRevenueAmount");
     const bulkAmountInput = document.getElementById("bulkAmount");
+    const autoSalaryStatus = document.getElementById("autoSalaryStatus");
 
     let selectedEmployeeId = null;
+    let autoSalaryInterval = null;
+    let isAutoSalaryActive = false;
+
+    // تحميل حالة الرواتب التلقائية عند بدء التشغيل
+    db.ref("settings/autoSalary").on("value", snapshot => {
+      isAutoSalaryActive = snapshot.val() || false;
+      updateAutoSalaryStatus();
+      
+      if (isAutoSalaryActive) {
+        startAutoSalary();
+      }
+    });
 
     function toggleSidebar() {
       document.getElementById("sidebar").classList.toggle("open");
@@ -295,6 +325,9 @@
         case 'companyRevenuesSection':
           displayCompanyRevenue();
           break;
+        case 'sendSalariesSection':
+          updateAutoSalaryStatus();
+          break;
       }
     }
 
@@ -318,18 +351,18 @@
           lastUpdateTimestamp: now,
           totalMinutesWorked: 0
         }).then(() => {
-          alert("تمت الإضافة!");
+          alert("تمت إضافة الموظف!");
           employeeNameInput.value = "";
           employeePhoneInput.value = "";
           dailyAmountInput.value = "";
-          logActivity(`تمت إضافة الموظف: ${name}`);
+          logActivity(`تمت إضافة الموظف: ${name} براتب يومي ${dailyAmount} دينار`);
         });
       } else {
         alert("يرجى إدخال الاسم ورقم الهاتف والمبلغ اليومي.");
       }
     }
 
-    function calculateSalaries() {
+    function calculateMinuteSalary() {
       const now = new Date();
       db.ref("employees").once("value", snapshot => {
           const updates = {};
@@ -341,33 +374,74 @@
               const dailyAmount = emp.dailyAmount || 0;
               
               if (dailyAmount > 0) {
-                  const lastUpdate = emp.lastUpdateTimestamp ? new Date(emp.lastUpdateTimestamp) : new Date();
-                  const diffMinutes = Math.floor((now - lastUpdate) / (1000 * 60));
+                  // إضافة المبلغ اليومي كاملاً كل دقيقة
+                  const earnedAmount = dailyAmount;
                   
-                  if (diffMinutes > 0) {
-                      const salaryPerMinute = dailyAmount / (8 * 60); // 8 ساعات عمل يومياً
-                      const earnedAmount = salaryPerMinute * diffMinutes;
-                      
-                      updates[`employees/${child.key}/balance`] = (emp.balance || 0) + earnedAmount;
-                      updates[`employees/${child.key}/lastUpdateTimestamp`] = now.toISOString();
-                      updates[`employees/${child.key}/totalMinutesWorked`] = (emp.totalMinutesWorked || 0) + diffMinutes;
-                      
-                      totalAdded += earnedAmount;
-                      employeesCount++;
-                      logActivity(`تم إضافة ${earnedAmount.toFixed(2)} للموظف ${emp.name} عن ${diffMinutes} دقيقة`);
-                  }
+                  updates[`employees/${child.key}/balance`] = (emp.balance || 0) + earnedAmount;
+                  updates[`employees/${child.key}/lastUpdateTimestamp`] = now.toISOString();
+                  updates[`employees/${child.key}/totalMinutesWorked`] = (emp.totalMinutesWorked || 0) + 1;
+                  
+                  totalAdded += earnedAmount;
+                  employeesCount++;
+                  logActivity(`تم إضافة ${earnedAmount} دينار للموظف ${emp.name} (الراتب اليومي)`);
               }
           });
           
           if (Object.keys(updates).length > 0) {
               db.ref().update(updates).then(() => {
-                  alert(`تم تحديث رواتب ${employeesCount} موظفين! المجموع المضاف: ${totalAdded.toFixed(2)}`);
-                  displayEmployeeList();
+                  console.log(`تم تحديث رواتب ${employeesCount} موظفين! المجموع المضاف: ${totalAdded} دينار`);
               });
-          } else {
-              alert("لا يوجد تحديثات لتنفيذها");
           }
       });
+    }
+
+    function toggleAutoSalary() {
+      isAutoSalaryActive = !isAutoSalaryActive;
+      
+      db.ref("settings/autoSalary").set(isAutoSalaryActive).then(() => {
+        if (isAutoSalaryActive) {
+          startAutoSalary();
+          logActivity("تم تشغيل الرواتب التلقائية");
+        } else {
+          stopAutoSalary();
+          logActivity("تم إيقاف الرواتب التلقائية");
+        }
+        updateAutoSalaryStatus();
+      });
+    }
+
+    function startAutoSalary() {
+      // إيقاف أي عملية سابقة إن وجدت
+      if (autoSalaryInterval) {
+        clearInterval(autoSalaryInterval);
+      }
+      
+      // تشغيل الرواتب التلقائية كل دقيقة (60000 مللي ثانية)
+      autoSalaryInterval = setInterval(() => {
+        calculateMinuteSalary();
+      }, 60000);
+      
+      // حساب الرواتب فوراً عند التشغيل
+      calculateMinuteSalary();
+    }
+
+    function stopAutoSalary() {
+      if (autoSalaryInterval) {
+        clearInterval(autoSalaryInterval);
+        autoSalaryInterval = null;
+      }
+    }
+
+    function updateAutoSalaryStatus() {
+      if (isAutoSalaryActive) {
+        autoSalaryStatus.textContent = "الحالة: نشط";
+        autoSalaryStatus.classList.remove("inactive");
+        autoSalaryStatus.classList.add("active");
+      } else {
+        autoSalaryStatus.textContent = "الحالة: غير نشط";
+        autoSalaryStatus.classList.remove("active");
+        autoSalaryStatus.classList.add("inactive");
+      }
     }
 
     function displayEmployeeList() {
@@ -395,7 +469,7 @@
 
           row.innerHTML = `
             <td>${emp.name}</td>
-            <td>${emp.balance.toFixed(2)}</td>
+            <td>${emp.balance.toFixed(2)} دينار</td>
             <td>${emp.id}</td>
             <td>${emp.phone}</td>
             <td></td>
@@ -415,7 +489,7 @@
       db.ref("employees/" + selectedEmployeeId).once("value", snapshot => {
         const emp = snapshot.val();
         selectedEmployeeName.textContent = `اسم الموظف: ${emp.name}`;
-        selectedEmployeeBalance.textContent = `الرصيد الحالي: ${emp.balance.toFixed(2)}`;
+        selectedEmployeeBalance.textContent = `الرصيد الحالي: ${emp.balance.toFixed(2)} دينار`;
         selectedEmployeeInfo.classList.remove("hidden");
       });
     }
@@ -440,19 +514,19 @@
             balance: newBalance,
             lastUpdateTimestamp: new Date().toISOString()
           }).then(() => {
-            logActivity(`تمت زيادة الرصيد للموظف ${emp.name} بمقدار ${amount}`);
+            logActivity(`تمت زيادة الرصيد للموظف ${emp.name} بمقدار ${amount} دينار`);
           });
         } else if (action === "decrease") {
           if (newBalance >= amount) {
             newBalance -= amount;
-            logActivity(`تم خصم مبلغ ${amount} من رصيد الموظف ${emp.name}`);
+            logActivity(`تم خصم مبلغ ${amount} دينار من رصيد الموظف ${emp.name}`);
 
             companyRevenueRef.once("value", snapshot => {
               const currentRevenue = snapshot.val() || 0;
-              const newRevenue = currentRevenue + amount; // زيادة إيرادات الشركة عند الخصم من الموظف
+              const newRevenue = currentRevenue + amount;
 
               companyRevenueRef.set(newRevenue).then(() => {
-                logActivity(`تم إضافة مبلغ ${amount} لإيرادات الشركة`);
+                logActivity(`تم إضافة مبلغ ${amount} دينار لإيرادات الشركة`);
               });
             });
           } else {
@@ -462,7 +536,7 @@
         }
 
         employeeRef.update({ balance: newBalance }).then(() => {
-          selectedEmployeeBalance.textContent = `الرصيد الحالي: ${newBalance.toFixed(2)}`;
+          selectedEmployeeBalance.textContent = `الرصيد الحالي: ${newBalance.toFixed(2)} دينار`;
           balanceChangeInput.value = "";
         });
       });
@@ -476,7 +550,7 @@
         return;
       }
 
-      if (!confirm(`هل أنت متأكد من رغبتك في إضافة ${amount} إلى رصيد جميع الموظفين؟`)) {
+      if (!confirm(`هل أنت متأكد من رغبتك في إضافة ${amount} دينار إلى رصيد جميع الموظفين؟`)) {
         return;
       }
 
@@ -492,9 +566,9 @@
         });
 
         db.ref().update(updates).then(() => {
-          alert(`تمت إضافة ${amount} إلى رصيد جميع الموظفين بنجاح!`);
+          alert(`تمت إضافة ${amount} دينار إلى رصيد جميع الموظفين بنجاح!`);
           bulkAmountInput.value = "";
-          logActivity(`تمت إضافة ${amount} إلى رصيد جميع الموظفين`);
+          logActivity(`تمت إضافة ${amount} دينار إلى رصيد جميع الموظفين`);
           displayEmployeeList();
         }).catch(error => {
           console.error("Error updating balances:", error);
@@ -527,7 +601,7 @@
     function displayCompanyRevenue() {
       db.ref("companyRevenue").once("value", snapshot => {
         const revenue = snapshot.val() || 0;
-        companyRevenueDisplay.textContent = `إيرادات الشركة: ${revenue.toLocaleString()}`;
+        companyRevenueDisplay.textContent = `إيرادات الشركة: ${revenue.toLocaleString()} دينار`;
       });
     }
 
@@ -545,11 +619,11 @@
 
         if (action === "increase") {
           newRevenue += amount;
-          logActivity(`تمت إضافة مبلغ ${amount} إلى إيرادات الشركة`);
+          logActivity(`تمت إضافة مبلغ ${amount} دينار إلى إيرادات الشركة`);
         } else if (action === "decrease") {
           if (newRevenue >= amount) {
             newRevenue -= amount;
-            logActivity(`تم خصم مبلغ ${amount} من إيرادات الشركة`);
+            logActivity(`تم خصم مبلغ ${amount} دينار من إيرادات الشركة`);
           } else {
             alert("إيرادات الشركة غير كافية.");
             return;
@@ -557,7 +631,7 @@
         }
 
         companyRevenueRef.set(newRevenue).then(() => {
-          companyRevenueDisplay.textContent = `إيرادات الشركة: ${newRevenue.toLocaleString()}`;
+          companyRevenueDisplay.textContent = `إيرادات الشركة: ${newRevenue.toLocaleString()} دينار`;
           companyRevenueAmount.value = "";
         });
       });
@@ -587,7 +661,16 @@
     window.onload = function () {
       hideAllSections();
       displayEmployeeList();
-      calculateSalaries(); // حساب الرواتب تلقائياً عند فتح الموقع
+      
+      // تحميل حالة الرواتب التلقائية عند بدء التشغيل
+      db.ref("settings/autoSalary").once("value", snapshot => {
+        isAutoSalaryActive = snapshot.val() || false;
+        updateAutoSalaryStatus();
+        
+        if (isAutoSalaryActive) {
+          startAutoSalary();
+        }
+      });
     };
   </script>
 </body>
